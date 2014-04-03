@@ -7,6 +7,8 @@
 
 namespace Latte;
 
+use Rixxi\SharedFileCache\SharedFileCache;
+
 
 /**
  * Templating engine Latte.
@@ -38,12 +40,6 @@ class Engine extends Object
 
 	/** @var string */
 	private $contentType = self::CONTENT_HTML;
-
-	/** @var string */
-	private $tempDirectory;
-
-	/** @var bool */
-	private $autoRefresh = TRUE;
 
 	/** @var array run-time filters */
 	private $filters = array(
@@ -79,6 +75,9 @@ class Engine extends Object
 
 	/** @var string */
 	private $baseTemplateClass = 'Latte\Template';
+
+	/** @var \Rixxi\SharedFileCache\SharedFileCache */
+	private $cache;
 
 
 	/**
@@ -144,7 +143,7 @@ class Engine extends Object
 	 */
 	private function loadCacheFile($name, $params)
 	{
-		if (!$this->tempDirectory) {
+		if ($this->cache === NULL) {
 			return call_user_func(function() {
 				foreach (func_get_arg(1) as $__k => $__v) {
 					$$__k = $__v;
@@ -154,26 +153,7 @@ class Engine extends Object
 			}, $this->compile($name), $params);
 		}
 
-		$file = $this->getCacheFile($name);
-		$handle = fopen($file, 'c+');
-		if (!$handle) {
-			throw new \RuntimeException("Unable to open or create file '$file'.");
-		}
-		flock($handle, LOCK_SH);
-		$stat = fstat($handle);
-		if (!$stat['size'] || ($this->autoRefresh && $this->getLoader()->isExpired($name, $stat['mtime']))) {
-			ftruncate($handle, 0);
-			flock($handle, LOCK_EX);
-			$stat = fstat($handle);
-			if (!$stat['size']) {
-				$code = $this->compile($name);
-				if (fwrite($handle, $code, strlen($code)) !== strlen($code)) {
-					ftruncate($handle, 0);
-					throw new \RuntimeException("Unable to write file '$file'.");
-				}
-			}
-			flock($handle, LOCK_SH); // holds the lock
-		}
+		$file = $this->cache->getGeneratedFilename($name);
 
 		call_user_func(function() {
 			foreach (func_get_arg(1) as $__k => $__v) {
@@ -190,16 +170,7 @@ class Engine extends Object
 	 */
 	public function getCacheFile($name)
 	{
-		if (!$this->tempDirectory) {
-			throw new \RuntimeException("Set path to temporary directory using setTempDirectory().");
-		} elseif (!is_dir($this->tempDirectory)) {
-			mkdir($this->tempDirectory);
-		}
-		$file = md5($name);
-		if (preg_match('#\b\w.{10,50}$#', $name, $m)) {
-			$file = trim(preg_replace('#\W+#', '-', $m[0]), '-') . '-' . $file;
-		}
-		return $this->tempDirectory . '/' . $file . '.php';
+		return $this->getCache()->getFilename($name);
 	}
 
 
@@ -257,7 +228,7 @@ class Engine extends Object
 	 */
 	public function setTempDirectory($path)
 	{
-		$this->tempDirectory = $path;
+		$this->getCache()->setTempDirectory($path);
 		return $this;
 	}
 
@@ -268,7 +239,7 @@ class Engine extends Object
 	 */
 	public function setAutoRefresh($on = TRUE)
 	{
-		$this->autoRefresh = (bool) $on;
+		$this->getCache()->setAutoRefresh($on);
 		return $this;
 	}
 
@@ -318,6 +289,30 @@ class Engine extends Object
 			$this->loader = new Loaders\FileLoader;
 		}
 		return $this->loader;
+	}
+
+
+	public function getCache()
+	{
+		if ($this->cache === NULL) {
+			$cache = new SharedFileCache;
+			$cache->setFilenameGenerator(function ($name) {
+				$file = md5($name);
+				if (preg_match('#\b\w.{10,50}$#', $name, $m)) {
+					$file = trim(preg_replace('#\W+#', '-', $m[0]), '-') . '-' . $file;
+				}
+				return $file;
+			});
+			$cache->setContentGenerator(function ($name) {
+				return $this->compile($name);
+			});
+			$cache->setExpirator(function ($name, $stat) {
+				return $this->getLoader()->isExpired($name, $stat['mtime']);
+			});
+			return $this->cache = $cache;
+		}
+
+		return $this->cache;
 	}
 
 }

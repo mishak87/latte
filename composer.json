@@ -15,7 +15,8 @@
 		}
 	],
 	"require": {
-		"php": ">=5.3.1"
+		"php": ">=5.3.1",
+		"rixxi/shared-file-cache": "0.0.*"
 	},
 	"require-dev": {
 		"nette/tester": "~1.0"
